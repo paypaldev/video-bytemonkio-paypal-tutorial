@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ByteMonk Demo Store — PayPal Checkout (JS SDK v6)</title>
+    <style>
+      :root {
+        --bg: #0b0e14;
+        --panel: #141924;
+        --line: #232a38;
+        --text: #e6e9ef;
+        --muted: #8b95a7;
+        --accent: #4f8ef7;
+        --good: #35c46b;
+        --warn: #e8b93b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 40px 20px;
+        background: var(--bg);
+        color: var(--text);
+        font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 940px; margin: 0 auto; display: grid; gap: 24px; grid-template-columns: 1fr 1fr; }
+      header { max-width: 940px; margin: 0 auto 28px; }
+      h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.01em; }
+      h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 14px; }
+      .sub { color: var(--muted); margin: 0; }
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+      .item { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .total { display: flex; justify-content: space-between; margin: 14px 0 20px; font-size: 17px; font-weight: 600; }
+      .price { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+      /* The v6 buttons are web components. They ship hidden and are revealed
+         only after findEligibleMethods() says the buyer can use them. */
+      #buttons { display: grid; gap: 10px; min-height: 50px; }
+      paypal-button, venmo-button, paypal-pay-later-button {
+        --paypal-button-border-radius: 8px;
+        width: 100%;
+      }
+
+      .log { font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; margin: 0; max-height: 420px; overflow-y: auto; }
+      .log .t { color: var(--muted); }
+      .log .k { color: var(--accent); }
+      .log .ok { color: var(--good); }
+      .log .warn { color: var(--warn); }
+      .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); margin-left: 8px; vertical-align: middle; }
+      .state { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font: 12.5px/1.8 ui-monospace, Menlo, monospace; margin-top: 14px; }
+      .state dt { color: var(--muted); }
+      .state dd { margin: 0; }
+      .note { color: var(--muted); font-size: 13px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+      code { background: #1c2231; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+      @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        ByteMonk Demo Store
+        <span class="badge" id="env-badge">loading…</span>
+        <span class="badge">JS SDK v6</span>
+      </h1>
+      <p class="sub">
+        The browser never talks to PayPal's REST API. It asks this server to create the order and to
+        capture it, so the price is decided server-side and the client secret stays on the server.
+      </p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Cart</h2>
+        <div class="item"><span id="item-name">Coffee Subscription Box</span><span class="price" id="item-price">—</span></div>
+        <div class="total"><span>Total</span><span class="price" id="total">—</span></div>
+
+        <!-- Web components, not divs. Each ships hidden; eligibility reveals it. -->
+        <div id="buttons">
+          <paypal-button type="pay" class="paypal-gold" hidden></paypal-button>
+          <venmo-button type="pay" class="venmo-blue" hidden></venmo-button>
+          <paypal-pay-later-button type="pay" class="paypal-gold" hidden></paypal-pay-later-button>
+        </div>
+
+        <p class="note" id="venmo-note">
+          In v6 you ask <code>findEligibleMethods()</code> what this buyer can use, and only reveal
+          those buttons. Venmo is US only and requires USD. In sandbox,
+          <code>countryCode</code> forces eligibility for testing; never send it in production.
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>What the server knows</h2>
+        <pre class="log" id="log"><span class="t">waiting for the SDK…</span></pre>
+        <dl class="state" id="state"></dl>
+        <p class="note">
+          After capture this panel polls <code>/api/orders/:id/state</code>. Watch
+          <code>learned from</code>: if the webhook beat the browser back, it says
+          <b>webhook</b>, and fulfilment still happens exactly once.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      const logEl = document.getElementById("log");
+      let firstLog = true;
+
+      function log(msg, cls = "") {
+        if (firstLog) { logEl.textContent = ""; firstLog = false; }
+
+        // textContent, not innerHTML. Some of this comes from an API response,
+        // and a payments page is the last place to interpolate server strings
+        // into markup.
+        const line = document.createElement("div");
+        const time = document.createElement("span");
+        time.className = "t";
+        time.textContent = new Date().toLocaleTimeString();
+        const body = document.createElement("span");
+        body.className = cls;
+        body.textContent = `  ${msg}`;
+        line.append(time, body);
+
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function renderState(state) {
+        const dl = document.getElementById("state");
+        dl.innerHTML = "";
+        for (const [k, v] of Object.entries(state)) {
+          const dt = document.createElement("dt");
+          dt.textContent = k;
+          const dd = document.createElement("dd");
+          dd.textContent = v === undefined || v === null ? "—" : String(v);
+          dl.append(dt, dd);
+        }
+      }
+
+      const ITEM_ID = "coffee-subscription-box";
+      let CONFIG = null;
+
+      // ---------------------------------------------------------------------
+      // Talking to our own server. The browser sends an item id, never a price.
+      // ---------------------------------------------------------------------
+
+      /**
+       * v6 requires createOrder to resolve to { orderId }, not a bare id string.
+       * That is the main shape change from v5.
+       */
+      async function createOrder() {
+        log("POST /api/orders — our server creates the order");
+        const res = await fetch("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ itemId: ITEM_ID }),
+        });
+        const order = await res.json();
+        if (!res.ok) throw new Error(order.message ?? "could not create order");
+
+        log(`order ${order.id} created, status ${order.status} — nobody has paid yet`);
+        return { orderId: order.id };
+      }
+
+      async function captureOrder(orderId) {
+        log(`POST /api/orders/${orderId}/capture — this is where money moves`);
+        const res = await fetch(`/api/orders/${orderId}/capture`, { method: "POST" });
+        const result = await res.json();
+
+        if (!res.ok) {
+          // The three branches, as seen from the browser. Only one of them is
+          // something the buyer can act on.
+          if (result.handling === "SHOW_CUSTOMER") {
+            log(`declined: ${result.message}`, "warn");
+            alert(result.message);
+            return;
+          }
+          log(`capture failed (${result.handling}): ${result.message}`, "warn");
+          return;
+        }
+
+        log(`captured: ${result.captureId}`, "ok");
+        log(`PayPal-Request-Id used: ${result.requestId}`);
+        pollState(orderId);
+      }
+
+      /**
+       * Poll the server's own view of the order. This is what makes the race
+       * between the webhook and the redirect visible on screen.
+       */
+      async function pollState(orderId, times = 10) {
+        for (let i = 0; i < times; i++) {
+          const state = await fetch(`/api/orders/${orderId}/state`).then((r) => r.json());
+          renderState({
+            "order id": orderId,
+            status: state.status,
+            "capture id": state.captureId,
+            "learned from": state.paidLearnedFrom,
+            "fulfilment attempts": state.fulfilmentAttempts,
+            "fulfilled at": state.fulfilledAt,
+            "capture attempts": state.captureAttempt?.attempts,
+            "request id": state.captureAttempt?.requestId,
+          });
+          if (i === 0 && state.paidLearnedFrom === "webhook") {
+            log("the webhook got here before your browser did", "ok");
+          }
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+
+      // ---------------------------------------------------------------------
+      // Shared session callbacks. Every payment method uses the same ones,
+      // which is the point: PayPal and Venmo are one integration, not two.
+      // ---------------------------------------------------------------------
+
+      const paymentSessionOptions = {
+        async onApprove(data) {
+          log(`buyer approved order ${data.orderId}. Still no money moved.`, "k");
+          await captureOrder(data.orderId);
+        },
+        onCancel() {
+          log("buyer cancelled at PayPal", "warn");
+        },
+        onError(err) {
+          log(`SDK error: ${err?.message ?? err}`, "warn");
+        },
+      };
+
+      /** Wire one web component to one payment session. */
+      function wireButton(selector, session, label) {
+        const button = document.querySelector(selector);
+        if (!button) return;
+        button.removeAttribute("hidden");
+        button.addEventListener("click", async () => {
+          log(`buyer chose: ${label}`, "k");
+          try {
+            // presentationMode "auto" lets the SDK pick popup or redirect and
+            // handles popup blockers for you.
+            await session.start({ presentationMode: "auto" }, createOrder());
+          } catch (error) {
+            log(`could not start ${label} payment: ${error?.message ?? error}`, "warn");
+          }
+        });
+      }
+
+      // ---------------------------------------------------------------------
+      // Starting up.
+      //
+      // PayPal's docs show a global `onPayPalWebSdkLoaded()` that the SDK calls
+      // when it is ready. We register it, but we do not depend on it: the
+      // string does not appear in the v6 core bundle we fetched, and a demo
+      // that silently never initialises is the worst possible failure on
+      // camera. The script's own `onload` is the reliable signal, so whichever
+      // fires first wins and `booted` makes sure we only run once.
+      // ---------------------------------------------------------------------
+
+      let booted = false;
+
+      async function boot() {
+        if (booted) return;
+        booted = true;
+
+        // `onload` can fire a tick before window.paypal is assigned.
+        for (let i = 0; i < 50 && !window.paypal; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        if (!window.paypal) {
+          log("the SDK loaded but window.paypal never appeared", "warn");
+          return;
+        }
+
+        try {
+          log("SDK loaded. Creating an instance…", "k");
+
+          // v6 authenticates with the client id directly for standard
+          // checkout. A server-minted client token is only needed for Fastlane.
+          const sdkInstance = await window.paypal.createInstance({
+            clientId: CONFIG.clientId,
+            components: ["paypal-payments", "venmo-payments"],
+            pageType: "checkout",
+          });
+
+          // Ask what this specific buyer can actually use, before rendering
+          // anything. In v5 you guessed with enable-funding and hoped.
+          const paymentMethods = await sdkInstance.findEligibleMethods({
+            currencyCode: CONFIG.currency,
+            ...(CONFIG.buyerCountry ? { countryCode: CONFIG.buyerCountry } : {}),
+            amount: CONFIG.catalog[ITEM_ID].price,
+          });
+
+          const eligible = ["paypal", "venmo", "paylater", "card"].filter((m) =>
+            paymentMethods.isEligible(m),
+          );
+          log(`eligible for this buyer: ${eligible.join(", ") || "(none)"}`);
+
+          if (paymentMethods.isEligible("paypal")) {
+            const session = sdkInstance.createPayPalOneTimePaymentSession(paymentSessionOptions);
+
+            // If the buyer is coming back from a redirect, resume the session
+            // rather than making them start again. The original callbacks fire.
+            if (session.hasReturned()) {
+              log("resuming a payment you started before leaving this page", "k");
+              await session.resume();
+            } else {
+              wireButton("paypal-button", session, "paypal");
+            }
+          }
+
+          if (paymentMethods.isEligible("venmo")) {
+            log("venmo is eligible for this buyer ✓", "ok");
+            const session = sdkInstance.createVenmoOneTimePaymentSession(paymentSessionOptions);
+            wireButton("venmo-button", session, "venmo");
+          } else {
+            log("venmo not eligible — needs a US buyer, USD, and a US merchant account", "warn");
+          }
+
+          if (paymentMethods.isEligible("paylater")) {
+            const details = paymentMethods.getDetails("paylater");
+            const session = sdkInstance.createPayLaterOneTimePaymentSession(paymentSessionOptions);
+            const button = document.querySelector("paypal-pay-later-button");
+            if (button && details) {
+              button.productCode = details.productCode;
+              button.countryCode = details.countryCode;
+            }
+            wireButton("paypal-pay-later-button", session, "paylater");
+          }
+        } catch (error) {
+          log(`SDK initialisation failed: ${error?.message ?? error}`, "warn");
+        }
+      }
+
+      window.onPayPalWebSdkLoaded = boot;
+
+      // ---------------------------------------------------------------------
+      // Boot: read our config, then load the right SDK for the environment.
+      // ---------------------------------------------------------------------
+
+      (async () => {
+        CONFIG = await fetch("/api/config").then((r) => r.json());
+
+        document.getElementById("env-badge").textContent = CONFIG.environment;
+
+        const item = CONFIG.catalog[ITEM_ID];
+        document.getElementById("item-name").textContent = item.name;
+        document.getElementById("item-price").textContent = `${item.price} ${CONFIG.currency}`;
+        document.getElementById("total").textContent = `${item.price} ${CONFIG.currency}`;
+
+        // Sandbox and live are different hosts for the v6 SDK, not a query
+        // parameter. Loading the wrong one silently talks to the wrong world.
+        const host =
+          CONFIG.environment === "live" ? "https://www.paypal.com" : "https://www.sandbox.paypal.com";
+
+        log(`loading JS SDK v6 from ${host}/web-sdk/v6/core`, "k");
+
+        const script = document.createElement("script");
+        script.src = `${host}/web-sdk/v6/core`;
+        script.async = true;
+        script.onload = boot;
+        script.onerror = () => log("the PayPal SDK failed to load", "warn");
+        document.head.appendChild(script);
+      })().catch((err) => log(err.message, "warn"));
+    </script>
+  </body>
+</html>

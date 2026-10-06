@@ -1,0 +1,34 @@
+{
+  "name": "paypal-payments-2026",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A PayPal sandbox integration built as a distributed system: authorization, capture, settlement, idempotency, verified webhooks, structured errors, and subscriptions — plus the failure cases that matter.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "server": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "DATA_DIR=.data-test tsx --test test/*.test.ts",
+    "doctor": "tsx scenarios/00-doctor.ts",
+    "checkout": "tsx scenarios/01-checkout-happy-path.ts",
+    "idempotency": "tsx scenarios/02-idempotent-capture.ts",
+    "webhook-replay": "tsx scenarios/03-webhook-replay.ts",
+    "errors": "tsx scenarios/04-errors-three-ways.ts",
+    "subscriptions": "tsx scenarios/05-subscription-lifecycle.ts",
+    "venmo": "tsx scenarios/06-venmo-eligibility.ts",
+    "agent": "tsx scenarios/07-agent-toolkit.ts",
+    "reset": "tsx scenarios/reset-local-state.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
