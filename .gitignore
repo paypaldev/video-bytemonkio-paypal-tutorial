@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------------------
+# Secrets. This file is the FIRST commit in this repository, on purpose.
+# Nothing below this line should ever reach git history.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# Local runtime state written by the scenarios and the webhook listener
+.data*/
+*.pem
+certs-cache/
+
+# Node
+node_modules/
+npm-debug.log*
+.npm/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Recording scratch (screenshots, takes) — keep the repo clean for reviewers
+recordings/
+*.mov
+*.mp4
